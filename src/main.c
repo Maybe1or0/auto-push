@@ -39,12 +39,27 @@ int main(int argc, char **argv) {
     }
     free(cfg.repo_path);
     cfg.repo_path = resolved_repo;
+    if (cfg.ssh_key != NULL) {
+        char *resolved_key = path_resolve(cfg.ssh_key);
+        if (resolved_key == NULL) {
+            fprintf(stderr, "Error: unable to resolve SSH key path %s\n", cfg.ssh_key);
+            config_destroy(&cfg);
+            return 1;
+        }
+        free(cfg.ssh_key);
+        cfg.ssh_key = resolved_key;
+    }
     if (!path_is_git_repo(cfg.repo_path)) {
         fprintf(stderr, "Error: %s is not a Git repository\n", cfg.repo_path);
         config_destroy(&cfg);
         return 1;
     }
     logger_init(cfg.log_file);
+    if (ssh_agent_prepare(&cfg) != 0) {
+        logger_close();
+        config_destroy(&cfg);
+        return 1;
+    }
     ret = daemon_run(&cfg);
     logger_close();
     config_destroy(&cfg);
