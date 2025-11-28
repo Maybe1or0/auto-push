@@ -1,4 +1,3 @@
-// Simple logger for the daemon.
 #ifndef LOGGER_H
 #define LOGGER_H
 

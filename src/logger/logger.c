@@ -1,4 +1,3 @@
-// Logging implementation.
 #include "logger.h"
 
 #include <stdarg.h>
