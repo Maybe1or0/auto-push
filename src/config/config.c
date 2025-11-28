@@ -1,4 +1,3 @@
-// Command-line parsing for the auto-push daemon.
 #include "config.h"
 
 #include <getopt.h>
@@ -42,6 +41,7 @@ int config_init(struct config *cfg) {
     cfg->branch = NULL;
     cfg->ssh_key = NULL;
     cfg->log_file = NULL;
+    cfg->password = NULL;
     cfg->use_tags = 0;
     return 0;
 }
@@ -62,8 +62,7 @@ static int parse_option(struct config *cfg, int opt, const char *arg) {
         cfg->use_tags = 1;
         return 0;
     case OPT_PASSWORD:
-        /* Password is acknowledged but not used by the daemon. */
-        return 0;
+        return set_string(&cfg->password, arg);
     default:
         return 1;
     }
@@ -117,10 +116,12 @@ void config_destroy(struct config *cfg) {
     free(cfg->branch);
     free(cfg->ssh_key);
     free(cfg->log_file);
+    free(cfg->password);
     cfg->repo_path = NULL;
     cfg->time_str = NULL;
     cfg->branch = NULL;
     cfg->ssh_key = NULL;
     cfg->log_file = NULL;
+    cfg->password = NULL;
     cfg->use_tags = 0;
 }

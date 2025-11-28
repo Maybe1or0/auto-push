@@ -1,4 +1,3 @@
-// Configuration handling for the auto-push daemon.
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -8,6 +7,7 @@ struct config {
     char *branch;       // nullable
     char *ssh_key;      // nullable
     char *log_file;     // nullable
+    char *password;     // nullable, passphrase for ssh-add
     int use_tags;       // boolean
 };
 
