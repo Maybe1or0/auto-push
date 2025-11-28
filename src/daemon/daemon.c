@@ -5,12 +5,190 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "../date/date.h"
 #include "../logger/logger.h"
+
+static int parse_agent_output(const char *out, char **sock_out, char **pid_out) {
+    char *copy;
+    char *token;
+    char *saveptr = NULL;
+
+    *sock_out = NULL;
+    *pid_out = NULL;
+    copy = strdup(out);
+    if (copy == NULL) {
+        return 1;
+    }
+    token = strtok_r(copy, ";\n", &saveptr);
+    while (token != NULL) {
+        while (*token == ' ' || *token == '\t') {
+            token++;
+        }
+        if (strncmp(token, "SSH_AUTH_SOCK=", 14) == 0) {
+            free(*sock_out);
+            *sock_out = strdup(token + 14);
+        } else if (strncmp(token, "SSH_AGENT_PID=", 14) == 0) {
+            free(*pid_out);
+            *pid_out = strdup(token + 14);
+        }
+        token = strtok_r(NULL, ";\n", &saveptr);
+    }
+    free(copy);
+    if (*sock_out == NULL || *pid_out == NULL) {
+        free(*sock_out);
+        free(*pid_out);
+        *sock_out = NULL;
+        *pid_out = NULL;
+        return 1;
+    }
+    return 0;
+}
+
+static int start_ssh_agent_if_needed(void) {
+    const char *sock = getenv("SSH_AUTH_SOCK");
+    FILE *fp = NULL;
+    char buffer[512];
+    size_t len;
+    int status;
+    char *sock_value = NULL;
+    char *pid_value = NULL;
+
+    if (sock != NULL && sock[0] != '\0') {
+        return 0;
+    }
+    fp = popen("ssh-agent -s", "r");
+    if (fp == NULL) {
+        logger_error("Failed to start ssh-agent");
+        return 1;
+    }
+    len = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    buffer[len] = '\0';
+    status = pclose(fp);
+    if (len == 0 || status == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        logger_error("ssh-agent command failed");
+        return 1;
+    }
+    if (parse_agent_output(buffer, &sock_value, &pid_value) != 0) {
+        logger_error("Failed to parse ssh-agent output");
+        return 1;
+    }
+    if (setenv("SSH_AUTH_SOCK", sock_value, 1) != 0 ||
+        setenv("SSH_AGENT_PID", pid_value, 1) != 0) {
+        free(sock_value);
+        free(pid_value);
+        logger_error("Failed to export ssh-agent environment");
+        return 1;
+    }
+    logger_info("Started ssh-agent (PID %s)", pid_value);
+    free(sock_value);
+    free(pid_value);
+    return 0;
+}
+
+static int create_askpass_script(char **path_out) {
+    char tmpl[] = "/tmp/auto_push_askpassXXXXXX";
+    int fd;
+    const char script[] = "#!/bin/sh\nprintf \"%s\" \"$SSH_KEY_PASSPHRASE\"\n";
+
+    *path_out = NULL;
+    fd = mkstemp(tmpl);
+    if (fd < 0) {
+        return 1;
+    }
+    if (write(fd, script, sizeof(script) - 1) != (ssize_t)(sizeof(script) - 1)) {
+        close(fd);
+        unlink(tmpl);
+        return 1;
+    }
+    if (fchmod(fd, 0700) != 0) {
+        close(fd);
+        unlink(tmpl);
+        return 1;
+    }
+    close(fd);
+    *path_out = strdup(tmpl);
+    if (*path_out == NULL) {
+        unlink(tmpl);
+        return 1;
+    }
+    return 0;
+}
+
+static int add_key_to_agent(const struct config *cfg) {
+    pid_t pid;
+    int status;
+    char *askpass_path = NULL;
+    int have_askpass = 0;
+    int idx = 0;
+    char *argv[6];
+
+    if (cfg == NULL || cfg->ssh_key == NULL) {
+        logger_info("No ssh key provided; skipping ssh-add");
+        return 0;
+    }
+    if (cfg->password != NULL) {
+        if (create_askpass_script(&askpass_path) != 0) {
+            logger_error("Failed to create askpass helper for ssh-add");
+            return 1;
+        }
+        have_askpass = 1;
+    }
+    pid = fork();
+    if (pid < 0) {
+        logger_error("Failed to fork for ssh-add");
+        if (have_askpass) {
+            unlink(askpass_path);
+            free(askpass_path);
+        }
+        return 1;
+    }
+    if (pid == 0) {
+        if (have_askpass) {
+            setenv("SSH_ASKPASS", askpass_path, 1);
+            setenv("SSH_ASKPASS_REQUIRE", "force", 1);
+            setenv("SSH_KEY_PASSPHRASE", cfg->password, 1);
+            if (getenv("DISPLAY") == NULL) {
+                setenv("DISPLAY", ":0", 1);
+            }
+        }
+        argv[idx++] = "ssh-add";
+#ifdef __APPLE__
+        argv[idx++] = "--apple-use-keychain";
+#endif
+        argv[idx++] = (char *)cfg->ssh_key;
+        argv[idx] = NULL;
+        execvp("ssh-add", argv);
+        _exit(127);
+    }
+    if (waitpid(pid, &status, 0) < 0) {
+        logger_error("ssh-add waitpid failed");
+        status = -1;
+    }
+    if (have_askpass) {
+        unlink(askpass_path);
+        free(askpass_path);
+    }
+    if (status == -1) {
+        return 1;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        logger_info("ssh-add loaded key %s", cfg->ssh_key);
+        return 0;
+    }
+    if (WIFEXITED(status)) {
+        logger_error("ssh-add failed with exit code %d", WEXITSTATUS(status));
+    } else if (WIFSIGNALED(status)) {
+        logger_error("ssh-add terminated by signal %d", WTERMSIG(status));
+    } else {
+        logger_error("ssh-add failed (status=%d)", status);
+    }
+    return 1;
+}
 
 static void close_standard_streams(void) {
     close(STDIN_FILENO);
@@ -69,6 +247,19 @@ static int build_ssh_command(const char *key_path) {
         return 1;
     }
     free(cmd);
+    return 0;
+}
+
+int ssh_agent_prepare(const struct config *cfg) {
+    if (cfg == NULL) {
+        return 1;
+    }
+    if (start_ssh_agent_if_needed() != 0) {
+        return 1;
+    }
+    if (add_key_to_agent(cfg) != 0) {
+        return 1;
+    }
     return 0;
 }
 
@@ -162,8 +353,12 @@ int daemon_run(const struct config *cfg) {
     for (;;) {
         if (date_is_now(hour, minute)) {
             logger_info("Scheduled time reached, running git push");
-            git_push(cfg);
-            sleep(60);
+            if (git_push(cfg) == 0) {
+                logger_info("Push finished, shutting down daemon");
+                return 0;
+            }
+            logger_error("Push failed, shutting down daemon");
+            return 1;
         } else {
             sleep(1);
         }
