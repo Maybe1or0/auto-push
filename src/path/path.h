@@ -1,4 +1,3 @@
-// Path utilities for repository handling.
 #ifndef PATH_H
 #define PATH_H
 

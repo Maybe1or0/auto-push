@@ -1,4 +1,3 @@
-// Path helper implementations.
 #include "path.h"
 
 #include <stdio.h>
