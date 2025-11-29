@@ -21,5 +21,4 @@ cd src
 ## Build and maintenance
 Run these from `src/`:
 - `make` (or `make daemon`): build `daemon_push`.
-- `make check`: compile a throwaway binary to verify the tree builds.
 - `make clean`: remove objects and `daemon_push`.
