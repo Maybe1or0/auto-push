@@ -10,7 +10,7 @@ SRCS    := main.c \
 OBJS    := $(SRCS:.c=.o)
 BIN     := daemon_push
 
-.PHONY: all daemon clean check
+.PHONY: all daemon clean
 
 all: daemon
 
@@ -24,6 +24,3 @@ $(BIN): $(OBJS)
 
 clean:
 	rm -f $(OBJS) $(BIN)
-
-check:
-	$(CC) $(CFLAGS) $(SRCS) -o /tmp/auto_push_check && rm -f /tmp/auto_push_check
