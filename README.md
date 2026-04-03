@@ -1,4 +1,10 @@
-# auto-push
+![Language](https://img.shields.io/badge/Language-C99-blue)
+![Standard](https://img.shields.io/badge/Standard-POSIX-lightgrey)
+![Build](https://img.shields.io/badge/Build-Make-blue)
+![Status](https://img.shields.io/badge/Status-Finished-green)
+![Maintained](https://img.shields.io/badge/Maintained-Yes-green)
+
+# Auto-push
 
 A small scheduled git pusher. You launch it with a repo path and a time (HH:MM); it resolves paths, starts an ssh-agent if needed, loads the provided key (optionally using your passphrase non-interactively), daemonizes, writes `daemon.pid` in the repo, and waits. When the scheduled time is reached it runs `git push` (with tags if requested) and then exits. Standard streams are closed unless you point logs to a file.
 
